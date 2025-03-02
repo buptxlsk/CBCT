@@ -60,7 +60,6 @@ class DICOMViewer:
         self.lines = []  # 储存线条actor
         self.state_snapshots = deque(maxlen=3)  # 保存最近的三次状态快照
 
-        self.opened = False
         self.x_last = 0
         self.y_last = 0
         self.z_last = 0
@@ -560,6 +559,7 @@ class MainWindow(QMainWindow):
             physical_pos = self.update_physical_position_label_map(actual_pos[0], actual_pos[1], actual_pos[2])
 
             self.marked_points.append((point_name, actual_pos, angle, physical_pos))
+
         self.disable_marking()
 
     def disable_marking(self):
@@ -854,6 +854,7 @@ class MainWindow(QMainWindow):
             physical_coords = (row.iloc[0]['Physical X'], row.iloc[0]['Physical Y'], row.iloc[0]['Physical Z'])
             return (name, coordinates, angles, physical_coords)
         return None
+
 
     def show_marked_points(self):
         dialog = QDialog(self)
@@ -1621,25 +1622,6 @@ class MainWindow(QMainWindow):
         self.lr_count = dicom_viewer.lr_count
         self.fh_count = dicom_viewer.fh_count
         self.tb_count = dicom_viewer.tb_count
-
-
-    def jump_last(self):
-        self.x_input.setValue(self.dicom_viewers[self.current_viewer_index].x_last)
-        self.y_input.setValue(self.dicom_viewers[self.current_viewer_index].y_last)
-        self.z_input.setValue(self.dicom_viewers[self.current_viewer_index].z_last)
-
-        self.rotate_x_input.setValue(self.dicom_viewers[self.current_viewer_index].x_angle_last)
-        self.rotate_y_input.setValue(self.dicom_viewers[self.current_viewer_index].y_angle_last)
-        self.rotate_z_input.setValue(self.dicom_viewers[self.current_viewer_index].z_angle_last)
-
-    def save_last(self):
-        self.dicom_viewers[self.current_viewer_index].x_last = self.x_input.value()
-        self.dicom_viewers[self.current_viewer_index].y_last = self.y_input.value()
-        self.dicom_viewers[self.current_viewer_index].z_last = self.z_input.value()
-
-        self.dicom_viewers[self.current_viewer_index].x_angle_last = self.rotate_x_input.value()
-        self.dicom_viewers[self.current_viewer_index].y_angle_last = self.rotate_y_input.value()
-        self.dicom_viewers[self.current_viewer_index].z_angle_last = self.rotate_z_input.value()
 
 
     def open_files(self):
@@ -3173,6 +3155,7 @@ class MainWindow(QMainWindow):
         z = np.degrees(z) % 360
 
         return x, y, z
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
