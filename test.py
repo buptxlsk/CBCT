@@ -1,6 +1,5 @@
 import sys
 import vtkmodules.all as vtk
-import os
 from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QSpinBox, QDial, QLabel, QMenuBar, QFileDialog, QGridLayout
 from PySide6.QtWidgets import QLineEdit, QPushButton, QMessageBox,  QTableWidget, QTableWidgetItem, QDialog, QVBoxLayout, QTextEdit, QMenu, QSlider, QDoubleSpinBox
 from PySide6.QtCore import Qt, QPoint
@@ -13,6 +12,45 @@ import itk
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
 import pandas as pd
 from collections import deque
+
+
+class MouseInteractorStyle(vtk.vtkInteractorStyleImage):
+    def __init__(self, renderer, image_actor):
+        super().__init__()
+        self.AddObserver("LeftButtonPressEvent", self.left_button_press_event)
+        self.AddObserver("LeftButtonReleaseEvent", self.left_button_release_event)
+        self.AddObserver("MouseMoveEvent", self.mouse_move_event)
+        self.renderer = renderer
+        self.image_actor = image_actor
+        self.dragging = False
+        self.last_mouse_position = None
+
+    def left_button_press_event(self, obj, event):
+        self.last_mouse_position = self.GetInteractor().GetEventPosition()
+        print(self.last_mouse_position)
+        self.dragging = True
+        self.OnLeftButtonDown()
+        return
+
+    def left_button_release_event(self, obj, event):
+        self.dragging = False
+        self.OnLeftButtonUp()
+        return
+
+    def mouse_move_event(self, obj, event):
+        if self.dragging and self.image_actor:
+            mouse_position = self.GetInteractor().GetEventPosition()
+            dx = mouse_position[0] - self.last_mouse_position[0]
+            dy = mouse_position[1] - self.last_mouse_position[1]
+            self.last_mouse_position = mouse_position
+
+            current_position = self.image_actor.GetPosition()
+            self.image_actor.SetPosition(current_position[0] + dx, current_position[1] + dy, 0)
+            self.GetInteractor().GetRenderWindow().Render()
+
+        self.OnMouseMove()
+        return
+
 
 class StateSnapshot:
     def __init__(self, x, y, z, rotate_x, rotate_y, rotate_z):
@@ -71,6 +109,10 @@ class DICOMViewer:
         self.fh_count = 0
         self.tb_count = 0
 
+        self.width = 0
+        self.height = 0
+        self.depth = 0
+
         if dicom_file:
             self.vtk_image=self.load_dicom_files(dicom_file)
 
@@ -92,6 +134,9 @@ class DICOMViewer:
         dicom_data = pydicom.dcmread(filenames[0])
         self.slice_thickness = dicom_data.SliceThickness
         self.pixel_spacing = dicom_data.PixelSpacing
+
+        dimensions = vtk_image.GetDimensions()
+        self.width, self.height, self.depth = dimensions
 
         del reader
         del dicom_io
@@ -435,7 +480,7 @@ class MainWindow(QMainWindow):
         open_files_action.triggered.connect(self.open_files)
 
         open_files_action = file_menu.addAction("Compare Files")
-        open_files_action.triggered.connect(self.compare_window)
+        open_files_action.triggered.connect(lambda: self.compare_window("axial"))
 
         read_key_points_from_excel_action = file_menu.addAction("从excel中读取关键点")
         read_key_points_from_excel_action.triggered.connect(self.read_key_points_from_excel)
@@ -1656,13 +1701,29 @@ class MainWindow(QMainWindow):
             if self.system == 1:
                 self.set_coordinate_system()
 
-    def change_image(self):
-        print(1)
+    def compare_window(self, view_type):
+        """
+        此方法创建一个新窗口并根据选择的视图类型同时显示两个 DICOM 文件的切片图，并设置第一个图像的透明度为50%。
 
-    def compare_window(self):
-        # 这里创建并初始化新界面
+        :param view_type: 选择视图类型，'axial', 'coronal' 或 'sagittal'
+        """
+        # 获取当前选中的 DICOMViewer 实例
+        dicom_viewer_1 = self.dicom_viewers[0]  # 第一个 DICOMViewer 实例
+        dicom_viewer_2 = self.dicom_viewers[1]  # 第二个 DICOMViewer 实例
+
+        # 确保两个 DICOM 图像已加载
+        if dicom_viewer_1.vtk_image is None or dicom_viewer_2.vtk_image is None:
+            print("Error: One or both DICOM images are not loaded.")
+            return
+        print("DICOM images loaded successfully.")
+
+        # 打印 DICOM 图像的维度
+        print(f"Depth: {dicom_viewer_1.depth}, Height: {dicom_viewer_1.height}, Width: {dicom_viewer_1.width}")
+        print(f"Depth: {dicom_viewer_2.depth}, Height: {dicom_viewer_2.height}, Width: {dicom_viewer_2.width}")
+
+        # 创建并初始化新界面
         new_window = QMainWindow(self)
-        new_window.setWindowTitle("Compare Viewer")
+        new_window.setWindowTitle("Compare DICOM Files")
 
         # 进行初始化操作
         central_widget = QWidget(new_window)
@@ -1673,21 +1734,91 @@ class MainWindow(QMainWindow):
         vtk_widget = QVTKRenderWindowInteractor(central_widget)
         layout.addWidget(vtk_widget)
 
+        # 创建渲染器
         renderer = vtk.vtkRenderer()
         vtk_widget.GetRenderWindow().AddRenderer(renderer)
         interactor = vtk_widget.GetRenderWindow().GetInteractor()
 
-        # 创建切换按钮
-        switch_button = QPushButton("Switch Image", new_window)
-        switch_button.clicked.connect(self.change_image)
-        layout.addWidget(switch_button)
+        # 创建第一个 ResliceImageViewer（用于显示第一个 DICOM 图像）
+        def create_image_actor(vtk_image, slice_orientation):
+            reslice = vtk.vtkImageReslice()
+            reslice.SetInputData(vtk_image)
+            reslice.SetOutputDimensionality(2)
+
+            if slice_orientation == 'axial':
+                reslice.SetResliceAxesDirectionCosines(1, 0, 0, 0, 1, 0, 0, 0, 1)
+                reslice.SetResliceAxesOrigin(0, 0, vtk_image.GetDimensions()[2] // 2)
+            elif slice_orientation == 'coronal':
+                reslice.SetResliceAxesDirectionCosines(1, 0, 0, 0, 0, 1, 0, 1, 0)
+                reslice.SetResliceAxesOrigin(0, 768 - 316, 0)
+            elif slice_orientation == 'sagittal':
+                reslice.SetResliceAxesDirectionCosines(0, 1, 0, 0, 0, 1, 1, 0, 0)
+                reslice.SetResliceAxesOrigin(vtk_image.GetDimensions()[0] // 2, 0, 0)
+
+            reslice.SetInterpolationModeToLinear()
+
+            actor = vtk.vtkImageActor()
+            actor.GetMapper().SetInputConnection(reslice.GetOutputPort())
+            return actor
+
+        # 创建图像actor
+        image_actor1 = create_image_actor(dicom_viewer_1.vtk_image, view_type)
+        image_actor2 = create_image_actor(dicom_viewer_2.vtk_image, view_type)
+
+        # 设置第一个图像为半透明，第二个为不透明
+        image_actor1.GetProperty().SetOpacity(0.5)
+        image_actor2.GetProperty().SetOpacity(1.0)
+
+        # 设置图像的颜色窗口（亮度/对比度）
+        image_actor1.GetProperty().SetColorWindow(600)
+        image_actor2.GetProperty().SetColorWindow(600)
+
+        # 将图像actor添加到渲染器
+        renderer.AddActor(image_actor1)
+        renderer.AddActor(image_actor2)
+
+        # 初始化 MouseInteractorStyle，并设置 image_actor2 为可拖动的对象
+        self.style = MouseInteractorStyle(renderer, image_actor2)
+        interactor.SetInteractorStyle(self.style)
+
+        # 渲染图像
+        renderer.ResetCamera()
+        vtk_widget.GetRenderWindow().Render()
+        interactor.Initialize()
+
+        # 创建切换图像透明度的按钮
+        change_button = QPushButton('Change Image', new_window)
+        change_button.clicked.connect(lambda: self.change_image(image_actor1, image_actor2))
+
+        # 将按钮添加到布局
+        layout.addWidget(change_button)
 
         # 设置新窗口的固定大小
         new_window.setFixedSize(800, 600)  # 设置宽度800px，高度600px，并固定大小
 
+        # 显示新窗口
         new_window.show()
 
+    def change_image(self, image_actor1, image_actor2):
+        """
+        切换图像的透明度，当前显示的第一个图像为半透明，第二个图像为不透明，点击按钮时切换状态
+        """
+        # 切换透明度
+        current_opacity_1 = image_actor1.GetProperty().GetOpacity()
+        current_opacity_2 = image_actor2.GetProperty().GetOpacity()
 
+        # 如果第一个图像是透明的，则设置第一个图像为不透明，第二个图像为半透明
+        if current_opacity_1 == 0.5:
+            image_actor1.GetProperty().SetOpacity(1.0)
+            image_actor2.GetProperty().SetOpacity(0.5)
+        else:
+            # 否则，设置第一个图像为半透明，第二个图像为不透明
+            image_actor1.GetProperty().SetOpacity(0.5)
+            image_actor2.GetProperty().SetOpacity(1.0)
+
+        # 渲染图像
+        image_actor1.GetRenderer().GetRenderWindow().Render()
+        image_actor2.GetRenderer().GetRenderWindow().Render()
 
     def add_right_click_zoom_handler(self, interactor, viewer):
         """Add a custom right-click listener for zoom functionality."""

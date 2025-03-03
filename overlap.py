@@ -135,14 +135,8 @@ class MainWindow(QMainWindow):
                 reslice.SetResliceAxesOrigin(vtk_image.GetDimensions()[0] // 2, 0, 0)
 
             reslice.SetInterpolationModeToLinear()
-            '''
-            mapper = vtk.vtkImageMapper()
-            mapper.SetInputConnection(reslice.GetOutputPort())
-            mapper.SetColorWindow(255)
-            mapper.SetColorLevel(127.5)
-            '''
+
             actor = vtk.vtkImageActor()
-            #actor.SetMapper(mapper)
             actor.GetMapper().SetInputConnection(reslice.GetOutputPort())
             return actor
 
