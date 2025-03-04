@@ -2,7 +2,7 @@ import sys
 import vtkmodules.all as vtk
 from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QSpinBox, QDial, QLabel, QMenuBar, QFileDialog, QGridLayout
 from PySide6.QtWidgets import QLineEdit, QPushButton, QMessageBox,  QTableWidget, QTableWidgetItem, QDialog, QVBoxLayout, QTextEdit, QMenu, QSlider, QDoubleSpinBox
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QImage, QPainter, QRegion, QMouseEvent, QPixmap, QPen, QCursor
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 import pydicom
@@ -83,6 +83,8 @@ class DICOMViewer:
 
         self.system = 0
 
+        self.is_files = 0
+
         # 关键点
         self.AODA = None
         self.ANS = None
@@ -98,12 +100,12 @@ class DICOMViewer:
         self.lines = []  # 储存线条actor
         self.state_snapshots = deque(maxlen=3)  # 保存最近的三次状态快照
 
-        self.x_last = 0
-        self.y_last = 0
-        self.z_last = 0
-        self.x_angle_last = 0
-        self.y_angle_last = 0
-        self.z_angle_last = 0
+        self.x = 0
+        self.y = 0
+        self.z = 0
+        self.x_angle = 0
+        self.y_angle = 0
+        self.z_angle = 0
 
         self.lr_count = 0
         self.fh_count = 0
@@ -138,6 +140,10 @@ class DICOMViewer:
         dimensions = vtk_image.GetDimensions()
         self.width, self.height, self.depth = dimensions
 
+        self.x = vtk_image.GetDimensions()[0] // 2
+        self.y = 768 - 316
+        self.z = vtk_image.GetDimensions()[2] // 2
+
         del reader
         del dicom_io
         del dicom_data
@@ -148,6 +154,11 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super(MainWindow, self).__init__()
 
+        self.compare_vtk_widget = None
+        self.compare_renderer = None
+        self.view_type = None
+        self.compare = 0
+        self.style = None
         self.lr_count = 0
         self.fh_count = 0
         self.tb_count = 0
@@ -351,6 +362,10 @@ class MainWindow(QMainWindow):
         self.last_h_angle_label = QLineEdit()
         self.last_h_angle_label.setText("Last Horizontal Angle: ")
         self.layout.addWidget(self.last_h_angle_label, 10, 3, 1, 2)
+
+        self.x_input.valueChanged.connect(self.update_x_value)
+        self.y_input.valueChanged.connect(self.update_y_value)
+        self.z_input.valueChanged.connect(self.update_z_value)
 
     def create_input_fields(self):
         # 创建和配置输入字段
@@ -1629,19 +1644,8 @@ class MainWindow(QMainWindow):
         snapshot = StateSnapshot(x, y, z, rotate_x, rotate_y, rotate_z)
         self.state_snapshots.append(snapshot)
 
-    def restore_state_snapshot(self):
-        if self.state_snapshots:
-            snapshot = self.state_snapshots.pop()
-            self.x_input.setValue(snapshot.x)
-            self.y_input.setValue(snapshot.y)
-            self.z_input.setValue(snapshot.z)
-            self.rotate_x_input.setValue(snapshot.rotate_x)
-            self.rotate_y_input.setValue(snapshot.rotate_y)
-            self.rotate_z_input.setValue(snapshot.rotate_z)
-            self.update_views()  # 更新视图以反映恢复的状态
-
     def undo(self):
-        self.restore_state_snapshot()
+        pass
 
     def param_init(self,dicom_viewer):
         self.slice_thickness = dicom_viewer.slice_thickness
@@ -1668,7 +1672,6 @@ class MainWindow(QMainWindow):
         self.fh_count = dicom_viewer.fh_count
         self.tb_count = dicom_viewer.tb_count
 
-
     def open_files(self):
         file_dialog = QFileDialog(self, "Select DICOM File(s)")
         file_dialog.setFileMode(QFileDialog.ExistingFiles)
@@ -1677,13 +1680,23 @@ class MainWindow(QMainWindow):
         if file_dialog.exec():
             selected_files = file_dialog.selectedFiles()
             if selected_files:
+                # 判断选择的是单个文件还是多个文件
+                if len(selected_files) == 1:
+                    x = 0  # 单文件
+                else:
+                    x = 1  # 多文件
+
+                # 创建 DICOMViewer 实例并将其添加到列表
                 dcm = DICOMViewer(selected_files)
                 self.dicom_viewers.append(dcm)  # 将实例添加到列表中
 
-            # 更新当前选择的DICOMViewer
-            self.current_viewer_index = len(self.dicom_viewers) - 1 # 默认新打开的
-            self.param_init(self.dicom_viewers[self.current_viewer_index])
-            self.visualize_vtk_image(self.dicom_viewers[self.current_viewer_index].vtk_image)
+                # 更新当前选择的DICOMViewer
+                self.current_viewer_index = len(self.dicom_viewers) - 1  # 默认新打开的
+                # 设置标志位 x
+                self.dicom_viewers[self.current_viewer_index].is_files = x
+                print(self.dicom_viewers[self.current_viewer_index].is_files)
+                self.param_init(self.dicom_viewers[self.current_viewer_index])
+                self.visualize_vtk_image(self.dicom_viewers[self.current_viewer_index].vtk_image)
 
     def switch_image(self):
         if len(self.dicom_viewers) > 1:
@@ -1707,19 +1720,13 @@ class MainWindow(QMainWindow):
 
         :param view_type: 选择视图类型，'axial', 'coronal' 或 'sagittal'
         """
+
+        self.compare = 1
+        self.view_type = view_type
+
         # 获取当前选中的 DICOMViewer 实例
-        dicom_viewer_1 = self.dicom_viewers[0]  # 第一个 DICOMViewer 实例
-        dicom_viewer_2 = self.dicom_viewers[1]  # 第二个 DICOMViewer 实例
-
-        # 确保两个 DICOM 图像已加载
-        if dicom_viewer_1.vtk_image is None or dicom_viewer_2.vtk_image is None:
-            print("Error: One or both DICOM images are not loaded.")
-            return
-        print("DICOM images loaded successfully.")
-
-        # 打印 DICOM 图像的维度
-        print(f"Depth: {dicom_viewer_1.depth}, Height: {dicom_viewer_1.height}, Width: {dicom_viewer_1.width}")
-        print(f"Depth: {dicom_viewer_2.depth}, Height: {dicom_viewer_2.height}, Width: {dicom_viewer_2.width}")
+        dicom_viewer_0 = self.dicom_viewers[0]  # 第一个 DICOMViewer 实例
+        dicom_viewer_1 = self.dicom_viewers[1]  # 第二个 DICOMViewer 实例
 
         # 创建并初始化新界面
         new_window = QMainWindow(self)
@@ -1734,51 +1741,20 @@ class MainWindow(QMainWindow):
         vtk_widget = QVTKRenderWindowInteractor(central_widget)
         layout.addWidget(vtk_widget)
 
-        # 创建渲染器
+        # 创建渲染器（属于新窗口）
         renderer = vtk.vtkRenderer()
         vtk_widget.GetRenderWindow().AddRenderer(renderer)
         interactor = vtk_widget.GetRenderWindow().GetInteractor()
 
-        # 创建第一个 ResliceImageViewer（用于显示第一个 DICOM 图像）
-        def create_image_actor(vtk_image, slice_orientation):
-            reslice = vtk.vtkImageReslice()
-            reslice.SetInputData(vtk_image)
-            reslice.SetOutputDimensionality(2)
+        # 存储子窗口的 renderer 和 vtk_widget
+        self.compare_renderer = renderer
+        self.compare_vtk_widget = vtk_widget
 
-            if slice_orientation == 'axial':
-                reslice.SetResliceAxesDirectionCosines(1, 0, 0, 0, 1, 0, 0, 0, 1)
-                reslice.SetResliceAxesOrigin(0, 0, vtk_image.GetDimensions()[2] // 2)
-            elif slice_orientation == 'coronal':
-                reslice.SetResliceAxesDirectionCosines(1, 0, 0, 0, 0, 1, 0, 1, 0)
-                reslice.SetResliceAxesOrigin(0, 768 - 316, 0)
-            elif slice_orientation == 'sagittal':
-                reslice.SetResliceAxesDirectionCosines(0, 1, 0, 0, 0, 1, 1, 0, 0)
-                reslice.SetResliceAxesOrigin(vtk_image.GetDimensions()[0] // 2, 0, 0)
-
-            reslice.SetInterpolationModeToLinear()
-
-            actor = vtk.vtkImageActor()
-            actor.GetMapper().SetInputConnection(reslice.GetOutputPort())
-            return actor
-
-        # 创建图像actor
-        image_actor1 = create_image_actor(dicom_viewer_1.vtk_image, view_type)
-        image_actor2 = create_image_actor(dicom_viewer_2.vtk_image, view_type)
-
-        # 设置第一个图像为半透明，第二个为不透明
-        image_actor1.GetProperty().SetOpacity(0.5)
-        image_actor2.GetProperty().SetOpacity(1.0)
-
-        # 设置图像的颜色窗口（亮度/对比度）
-        image_actor1.GetProperty().SetColorWindow(600)
-        image_actor2.GetProperty().SetColorWindow(600)
-
-        # 将图像actor添加到渲染器
-        renderer.AddActor(image_actor1)
-        renderer.AddActor(image_actor2)
+        # 创建并设置图像
+        self.setup_image_view(dicom_viewer_0, dicom_viewer_1, renderer)
 
         # 初始化 MouseInteractorStyle，并设置 image_actor2 为可拖动的对象
-        self.style = MouseInteractorStyle(renderer, image_actor2)
+        self.style = MouseInteractorStyle(renderer, self.image_actor2)
         interactor.SetInteractorStyle(self.style)
 
         # 渲染图像
@@ -1786,12 +1762,18 @@ class MainWindow(QMainWindow):
         vtk_widget.GetRenderWindow().Render()
         interactor.Initialize()
 
-        # 创建切换图像透明度的按钮
-        change_button = QPushButton('Change Image', new_window)
-        change_button.clicked.connect(lambda: self.change_image(image_actor1, image_actor2))
+        # 创建视图类型切换按钮
+        axial_button = QPushButton('Axial View', new_window)
+        axial_button.clicked.connect(lambda: self.change_view('axial', dicom_viewer_0, dicom_viewer_1, renderer))
+        layout.addWidget(axial_button)
 
-        # 将按钮添加到布局
-        layout.addWidget(change_button)
+        coronal_button = QPushButton('Coronal View', new_window)
+        coronal_button.clicked.connect(lambda: self.change_view('coronal', dicom_viewer_0, dicom_viewer_1, renderer))
+        layout.addWidget(coronal_button)
+
+        sagittal_button = QPushButton('Sagittal View', new_window)
+        sagittal_button.clicked.connect(lambda: self.change_view('sagittal', dicom_viewer_0, dicom_viewer_1, renderer))
+        layout.addWidget(sagittal_button)
 
         # 设置新窗口的固定大小
         new_window.setFixedSize(800, 600)  # 设置宽度800px，高度600px，并固定大小
@@ -1799,26 +1781,119 @@ class MainWindow(QMainWindow):
         # 显示新窗口
         new_window.show()
 
-    def change_image(self, image_actor1, image_actor2):
-        """
-        切换图像的透明度，当前显示的第一个图像为半透明，第二个图像为不透明，点击按钮时切换状态
-        """
-        # 切换透明度
-        current_opacity_1 = image_actor1.GetProperty().GetOpacity()
-        current_opacity_2 = image_actor2.GetProperty().GetOpacity()
+    def create_image_actor(self, dicom_viewer, view_type):
 
-        # 如果第一个图像是透明的，则设置第一个图像为不透明，第二个图像为半透明
-        if current_opacity_1 == 0.5:
-            image_actor1.GetProperty().SetOpacity(1.0)
-            image_actor2.GetProperty().SetOpacity(0.5)
-        else:
-            # 否则，设置第一个图像为半透明，第二个图像为不透明
-            image_actor1.GetProperty().SetOpacity(0.5)
-            image_actor2.GetProperty().SetOpacity(1.0)
+        reslice = vtk.vtkImageReslice()
+        reslice.SetInputData(dicom_viewer.vtk_image)
+        reslice.SetOutputDimensionality(2)
 
-        # 渲染图像
-        image_actor1.GetRenderer().GetRenderWindow().Render()
-        image_actor2.GetRenderer().GetRenderWindow().Render()
+        # 根据视图类型设置切片原点和方向
+        if view_type == 'axial':
+            if dicom_viewer.is_files == 0:
+                reslice.SetResliceAxesDirectionCosines(1, 0, 0, 0, -1, 0, 0, 0, 1)
+            else:
+                reslice.SetResliceAxesDirectionCosines(1, 0, 0, 0, -1, 0, 0, 0, 1)
+            reslice.SetResliceAxesOrigin(0, 0, dicom_viewer.z)
+            print(f'z:{dicom_viewer.z}')
+        elif view_type == 'coronal':
+            if dicom_viewer.is_files == 0:
+                reslice.SetResliceAxesDirectionCosines(1, 0, 0, 0, 0, -1, 0, 1, 0)
+            else:
+                reslice.SetResliceAxesDirectionCosines(1, 0, 0, 0, 0, 1, 0, 1, 0)
+            reslice.SetResliceAxesOrigin(0, dicom_viewer.y, 0)
+            print(f'y:{dicom_viewer.y}')
+        elif view_type == 'sagittal':
+            if dicom_viewer.is_files == 0:
+                reslice.SetResliceAxesDirectionCosines(0, -1, 0, 0, 0, -1, 1, 0, 0)
+            else:
+                reslice.SetResliceAxesDirectionCosines(0, -1, 0, 0, 0, 1, 1, 0, 0)
+            reslice.SetResliceAxesOrigin(dicom_viewer.x, 0, 0)
+            print(f'x:{dicom_viewer.x}')
+
+        reslice.SetInterpolationModeToLinear()
+
+        actor = vtk.vtkImageActor()
+        actor.GetMapper().SetInputConnection(reslice.GetOutputPort())
+
+        return actor
+
+    def set_image_properties(self, actor):
+        """
+        设置图像的亮度、对比度等属性
+        """
+        actor.GetProperty().SetColorWindow(600)
+
+    def setup_image_view(self, dicom_viewer_0, dicom_viewer_1, renderer):
+        """
+        根据 view_type 创建并设置图像演员
+        """
+        # 清除渲染器中的所有现有图像
+        renderer.RemoveAllViewProps()
+
+        # 创建新的图像actor
+        image_actor1 = self.create_image_actor(dicom_viewer_0, self.view_type)
+        image_actor2 = self.create_image_actor(dicom_viewer_1, self.view_type)
+
+        # 设置图像的透明度
+        image_actor1.GetProperty().SetOpacity(1)  # 第一个图像不透明
+        image_actor2.GetProperty().SetOpacity(0.5)  # 第二个图像半透明
+
+        # 设置图像的颜色窗口（亮度/对比度）
+        self.set_image_properties(image_actor1)
+        self.set_image_properties(image_actor2)
+
+        # 将图像actor添加到渲染器
+        renderer.AddActor(image_actor1)
+        renderer.AddActor(image_actor2)
+
+        # 存储图像演员
+        self.image_actor1 = image_actor1
+        self.image_actor2 = image_actor2
+
+    def change_view(self, view_type, dicom_viewer_0, dicom_viewer_1, renderer):
+        """
+        更改视图类型并重新渲染图像
+        """
+        self.view_type = view_type
+        # 更新图像视图
+        self.setup_image_view(dicom_viewer_0, dicom_viewer_1, renderer)
+
+        # 重新渲染
+        renderer.ResetCamera()
+        self.compare_vtk_widget.GetRenderWindow().Render()
+
+    def update_x_value(self):
+        """
+        当 x_input 的值发生变化时，更新 dicom_viewers 中当前选中 viewer 的 x 值，并打印新的值。
+        """
+        # 获取当前选中 DICOM viewer 的索引，并更新其 x 值
+        current_viewer = self.dicom_viewers[self.current_viewer_index]
+        current_viewer.x = self.x_input.value()
+
+        # 打印新的 x 值
+        print(f"{self.current_viewer_index} New x value: {current_viewer.x}")
+
+    def update_y_value(self):
+        """
+        当 y_input 的值发生变化时，更新 dicom_viewers 中当前选中 viewer 的 y 值，并打印新的值。
+        """
+        # 获取当前选中 DICOM viewer 的索引，并更新其 y 值
+        current_viewer = self.dicom_viewers[self.current_viewer_index]
+        current_viewer.y = self.y_input.value()
+
+        # 打印新的 y 值
+        print(f"{self.current_viewer_index} New y value: {current_viewer.y}")
+
+    def update_z_value(self):
+        """
+        当 z_input 的值发生变化时，更新 dicom_viewers 中当前选中 viewer 的 z 值，并打印新的值。
+        """
+        # 获取当前选中 DICOM viewer 的索引，并更新其 z 值
+        current_viewer = self.dicom_viewers[self.current_viewer_index]
+        current_viewer.z = self.z_input.value()
+
+        # 打印新的 z 值
+        print(f"{self.current_viewer_index} New z value: {current_viewer.z}")
 
     def add_right_click_zoom_handler(self, interactor, viewer):
         """Add a custom right-click listener for zoom functionality."""
