@@ -720,7 +720,7 @@ class MainWindow(QMainWindow):
             self._replace_or_add_key_point(new_SR)
             self.set_SR_button.setStyleSheet("color: green;")
 
-    def set_AODA(self):  # 将目前位置保存为AODA
+    def set_AODA(self): # 将目前位置保存为AODA
         if self.system == 0:
             current_pos = [self.x_input.value(), self.y_input.value(), self.z_input.value()]
             current_angle = [self.rotate_x_input.value(), self.rotate_y_input.value(), self.rotate_z_input.value()]
@@ -1694,7 +1694,6 @@ class MainWindow(QMainWindow):
                 self.current_viewer_index = len(self.dicom_viewers) - 1  # 默认新打开的
                 # 设置标志位 x
                 self.dicom_viewers[self.current_viewer_index].is_files = x
-                print(self.dicom_viewers[self.current_viewer_index].is_files)
                 self.param_init(self.dicom_viewers[self.current_viewer_index])
                 self.visualize_vtk_image(self.dicom_viewers[self.current_viewer_index].vtk_image)
 
@@ -1871,7 +1870,7 @@ class MainWindow(QMainWindow):
         current_viewer.x = self.x_input.value()
 
         # 打印新的 x 值
-        print(f"{self.current_viewer_index} New x value: {current_viewer.x}")
+        # print(f"{self.current_viewer_index} New x value: {current_viewer.x}")
 
     def update_y_value(self):
         """
@@ -1882,7 +1881,7 @@ class MainWindow(QMainWindow):
         current_viewer.y = self.y_input.value()
 
         # 打印新的 y 值
-        print(f"{self.current_viewer_index} New y value: {current_viewer.y}")
+        # print(f"{self.current_viewer_index} New y value: {current_viewer.y}")
 
     def update_z_value(self):
         """
@@ -1893,7 +1892,7 @@ class MainWindow(QMainWindow):
         current_viewer.z = self.z_input.value()
 
         # 打印新的 z 值
-        print(f"{self.current_viewer_index} New z value: {current_viewer.z}")
+        # print(f"{self.current_viewer_index} New z value: {current_viewer.z}")
 
     def add_right_click_zoom_handler(self, interactor, viewer):
         """Add a custom right-click listener for zoom functionality."""
@@ -3225,7 +3224,7 @@ class MainWindow(QMainWindow):
 
             self.origin_world = [self.SR[1][0], self.SR[1][1], self.SR[1][2]]
 
-            for (name, (x, y, z), (angle_x, angle_y, angle_z), (phy_x, phy_y, phy_z)) in key_points:
+            for (name, (x, y, z), (angle_x, angle_y, angle_z), _) in key_points:
                 pos = self.rotate_coordinate(x, y, z,
                                              angle_x,
                                              angle_y,
@@ -3254,7 +3253,7 @@ class MainWindow(QMainWindow):
             # 从旋转矩阵计算欧拉角
             euler_angles = self.euler_angles_from_rotation_matrix(rotation_matrix)
             self.euler_angles = euler_angles
-            # print(f"euler_angles\n{self.euler_angles}")
+            print(f"euler_angles\n{self.euler_angles}")
 
             self.euler_angles_map[0] = (180 + self.euler_angles[0]) % 360
             self.euler_angles_map[1] = -(self.euler_angles[1]) % 360
@@ -3295,7 +3294,7 @@ class MainWindow(QMainWindow):
 
             self.key_points.clear()
 
-            for (name, (x, y, z), (angle_x, angle_y, angle_z), (phy_x, phy_y, phy_z)) in key_points:
+            for (name, (x, y, z), (angle_x, angle_y, angle_z), _) in key_points:
                 slice_pos = (x, y, z)
                 angles = (angle_x, angle_y, angle_z)
                 physicals = self.update_physical_position_label_plus(x, y, z, angle_x, angle_y, angle_z)
@@ -3317,6 +3316,7 @@ class MainWindow(QMainWindow):
             print("key_points\n", self.key_points)
 
             self.dicom_viewers[self.current_viewer_index].system = 1  # 建立坐标系的标志位
+            self.system = self.dicom_viewers[self.current_viewer_index].system
 
 
 
